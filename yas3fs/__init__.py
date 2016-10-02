@@ -445,16 +445,17 @@ class FSCache():
         if not skip_is_ready:
             self.is_ready(path, proplist = wait_until_cleared_proplist)
 
+        entry = self.entries.get(path) or {}
+        existing_lock = entry.get('lock')
+        if existing_lock and existing_lock._RLock__owner == threading.current_thread().ident:
+            return existing_lock
         with self.lock: # Global cache lock, used only for giving file-level locks
             try:
-                return self.entries[path]['lock']
+                return self.new_locks[path] # not guaranteed to be owned by current thread
             except KeyError:
-                try:
-                    return self.new_locks[path]
-                except KeyError:
-                    new_lock = threading.RLock()
-                    self.new_locks[path] = new_lock
-                    return new_lock
+                new_lock = threading.RLock()
+                self.new_locks[path] = new_lock
+                return new_lock
     def add(self, path):
         with self.get_lock(path):
             if not path in self.entries:
@@ -613,7 +614,7 @@ class SNS_HTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         string_to_sign = '\n'.join(list(itertools.chain.from_iterable(
                     [ (k, message_content[k]) for k in sorted(message_content.iterkeys()) ]
                     ))) + '\n'
-        
+
         import M2Crypto # Required to check integrity of SNS HTTP notifications
         cert = M2Crypto.X509.load_cert_string(self.certificate)
         pub_key = cert.get_pubkey().get_rsa()
@@ -1074,12 +1075,7 @@ class YAS3FS(LoggingMixIn, Operations):
         logger.info("signal_handler DONE %s", signum)
 
     def flush_all_cache(self):
-        logger.debug("flush_all_cache")
-        with self.cache.lock:
-            for path in self.cache.entries:
-                data = self.cache.get(path, 'data')
-                if data and data.has('change'):
-                    self.upload_to_s3(path, data)
+        logger.debug("flush_all_cache called but does nothing now")
 
     def destroy(self, path):
         logger.debug("destroy '%s'" % (path))
@@ -1203,11 +1199,11 @@ class YAS3FS(LoggingMixIn, Operations):
                 with self.cache.lock:
                     self.flush_all_cache()
                     self.cache.reset_all() # Completely reset the cache
-            else: 
+            else:
                 # c[2] exists and is not the root directory
                 for path in self.cache.entries.keys():
-                    # If the reset path is a directory and it matches 
-                    # the directory in the cache, it will delete the 
+                    # If the reset path is a directory and it matches
+                    # the directory in the cache, it will delete the
                     # parent directory cache as well.
                     if path.startswith(c[2]):
                         self.delete_cache(path)
@@ -2515,7 +2511,7 @@ class YAS3FS(LoggingMixIn, Operations):
                 if retriesAttempted > 1:
                     logger.debug('%d retries' % (retriesAttempted))
                     time.sleep(self.read_retries_sleep)
-                
+
                 # Note added max retries as this can go on forever... for https://github.com/danilop/yas3fs/issues/46
                 logger.debug("read '%s' '%i' '%i' '%s' out of range" % (path, length, offset, fh))
                 self.enqueue_download_data(path, offset, length)
