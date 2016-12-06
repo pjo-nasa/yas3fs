@@ -1293,11 +1293,11 @@ class YAS3FS(LoggingMixIn, Operations):
             s3q = 0 ### Remove duplicate code
             for i in range(0, self.s3_num):
                 s3q += self.s3_queue[i].qsize()
-            logger.info("entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: %i, %i, %i, %i, %i, %i"
+            logger.debug("entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: %i, %i, %i, %i, %i, %i"
                         % (num_entries, mem_size, disk_size,
                            self.download_queue.qsize(), self.prefetch_queue.qsize(), s3q))
 
-            logger.info("multipart_uploads_in_progress = " + str(self.multipart_uploads_in_progress))
+            logger.debug("multipart_uploads_in_progress = " + str(self.multipart_uploads_in_progress))
 
             if debug:
                 logger.debug("new_locks, unused_locks: %i, %i"
@@ -1591,7 +1591,7 @@ class YAS3FS(LoggingMixIn, Operations):
                             try:
                                 key.metadata[metadata_name] = json.dumps(values)
                             except UnicodeDecodeError:
-                                logger.info("set_metadata '%s' '%s' '%s' cannot decode unicode, not written on S3"
+                                logger.error("set_metadata '%s' '%s' '%s' cannot decode unicode, not written on S3"
                                             % (path, metadata_name, key))
                                 pass # Ignore the binary values - something better TODO ???
                     if (not data) or (data and (not data.has('change'))):
@@ -1883,7 +1883,11 @@ class YAS3FS(LoggingMixIn, Operations):
                else:
 
                    (path, start, end) = self.download_queue.get(True, 1) # 1 second time-out
+               sTime=dt.datetime.now()
                self.download_data(path, start, end)
+               fTime=dt.datetime.now()
+               elapsed = (fTime-sTime).microseconds/1e6
+               logger.info("download_data done '%s' %i-%i elapsed %.6f" % (path, start, end, elapsed))
                if prefetch:
                    self.prefetch_queue.task_done()
                else:
@@ -1969,7 +1973,7 @@ class YAS3FS(LoggingMixIn, Operations):
 
             except Exception as e:
                 logger.exception(e)
-                logger.info("download_data error '%s' %i-%i [thread '%s'] -> retrying max: %i sleep: %i retries: %i" % (path, start, end, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
+                logger.warn("download_data error '%s' %i-%i [thread '%s'] -> retrying max: %i sleep: %i retries: %i" % (path, start, end, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
                 time.sleep(self.download_retries_sleep) # for https://github.com/danilop/yas3fs/issues/46
                 key = copy.copy(self.get_key(path)) # Do I need this to overcome error "caching" ???
 
@@ -2556,7 +2560,7 @@ class YAS3FS(LoggingMixIn, Operations):
 
         with data.get_lock():
             if not data.content:
-                logger.info("write awake '%s' '%i' '%i' '%s' no content" % (path, len(new_data), offset, fh))
+                logger.debug("write awake '%s' '%i' '%i' '%s' no content" % (path, len(new_data), offset, fh))
                 return 0
             logger.debug("write '%s' '%i' '%i' '%s' '%s' content" % (path, len(new_data), offset, fh, data.content.name.decode('utf-8')))
             data.content.seek(offset)
@@ -2678,7 +2682,7 @@ class YAS3FS(LoggingMixIn, Operations):
                         part.pos = 0
 
                         logger.exception(e)
-                        logger.info("error during multipart upload part %i retry %i part__ %s : %s"
+                        logger.warn("error during multipart upload part %i retry %i part__ %s : %s"
                                     % (num, retry, str(part.__dict__), sys.exc_info()[0]))
                         time.sleep(self.s3_retries_sleep) # Better wait N seconds before retrying
                 logger.debug("end upload of part %i retry %i part__ %s" % (num, retry, str(part.__dict__)))
