@@ -1899,7 +1899,11 @@ class YAS3FS(LoggingMixIn, Operations):
         thread_name = threading.current_thread().name
         logger.debug("download_data '%s' %i-%i [thread '%s']" % (path, start, end, thread_name))
 
+        sTime=dt.datetime.now()
         original_key = self.get_key(path)
+        delta = dt.datetime.now() - sTime
+        ms = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
+        logger.info("download_data.get_key completed for '%s' in %i milliseconds" % (path, ms))
         if original_key == None:
             logger.debug("download_data no key (before) '%s' [thread '%s']"
                              % (path, thread_name))
@@ -1946,6 +1950,7 @@ class YAS3FS(LoggingMixIn, Operations):
         retry = True
         # for https://github.com/danilop/yas3fs/issues/46
         retriesAttempted = 0
+        startDownload=dt.datetime.now()
         while retry:
 
             # for https://github.com/danilop/yas3fs/issues/62
@@ -1980,6 +1985,10 @@ class YAS3FS(LoggingMixIn, Operations):
         if debug:
             elapsed = (n2-n1).microseconds/1e6
             logger.debug("download_data done '%s' %i-%i [thread '%s'] elapsed %.6f" % (path, start, end, thread_name, elapsed))
+
+        delta = dt.datetime.now() - startDownload
+        msDelta = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
+        logger.info("download_data.key.get_content_as_string completed for '%s' with range of  %i-%i in %i milliseconds" % (path,  start, end, msDelta))
 
         with self.cache.get_lock(path):
                 data = self.cache.get(path, 'data')
