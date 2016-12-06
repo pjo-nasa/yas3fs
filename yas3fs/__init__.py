@@ -1885,9 +1885,9 @@ class YAS3FS(LoggingMixIn, Operations):
                    (path, start, end) = self.download_queue.get(True, 1) # 1 second time-out
                sTime=dt.datetime.now()
                self.download_data(path, start, end)
-               fTime=dt.datetime.now()
-               elapsed = (fTime-sTime).microseconds/1e6
-               logger.info("download_data done '%s' %i-%i elapsed %.6f" % (path, start, end, elapsed))
+               delta = dt.datetime.now() - sTime
+               ms = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
+               logger.info("download_data completed for '%s' from %i-%i in %i milliseconds" % (path, start, end, ms))
                if prefetch:
                    self.prefetch_queue.task_done()
                else:
