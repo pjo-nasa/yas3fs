@@ -700,7 +700,7 @@ class YAS3FS(LoggingMixIn, Operations):
         ### self.http_listen_path_length = 30
         self.running = True
 
-        self.check_status_interval = 5.0 # Seconds, no need to configure that
+        self.check_status_interval = 30.0 # Seconds, no need to configure that
 
         self.s3_retries = options.s3_retries # Maximum number of S3 retries (outside of boto)
         logger.info("s3-retries: '%i'" % self.s3_retries)
@@ -1164,7 +1164,7 @@ class YAS3FS(LoggingMixIn, Operations):
                 self.cache.delete(path) # But keep it in the parent readdir
 
     def delete_cache(self, path):
-        logger.debug("delete_cache '%s'" % (path))
+        logger.info("delete_cache called for '%s'" % (path))
         with self.cache.get_lock(path):
             self.cache.delete(path)
             self.reset_parent_readdir(path)
@@ -1285,7 +1285,6 @@ class YAS3FS(LoggingMixIn, Operations):
             self.publish_queue.put(message)
 
     def check_status(self):
-        logger.debug("check_status")
 
         while self.cache_entries:
 
@@ -1293,7 +1292,7 @@ class YAS3FS(LoggingMixIn, Operations):
             s3q = 0 ### Remove duplicate code
             for i in range(0, self.s3_num):
                 s3q += self.s3_queue[i].qsize()
-            logger.debug("entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: %i, %i, %i, %i, %i, %i"
+            logger.info("Current Status entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: %i, %i, %i, %i, %i, %i"
                         % (num_entries, mem_size, disk_size,
                            self.download_queue.qsize(), self.prefetch_queue.qsize(), s3q))
 
@@ -1313,11 +1312,8 @@ class YAS3FS(LoggingMixIn, Operations):
 
     def check_cache_size(self):
 
-        logger.debug("check_cache_size")
-
         while self.cache_entries:
 
-            logger.debug("check_cache_size get_memory_usage")
             num_entries, mem_size, disk_size = self.cache.get_memory_usage()
 
             purge = False
@@ -1336,21 +1332,21 @@ class YAS3FS(LoggingMixIn, Operations):
                 path = self.cache.lru.popleft() # Take a path on top of the LRU (least used)
                 with self.cache.get_lock(path):
                     if self.cache.has(path): # Path may be deleted before I acquire the lock
-                        logger.debug("check_cache_size purge: '%s' '%s' ?" % (store, path))
+                        logger.info("check_cache_size purge: '%s' '%s' ?" % (store, path))
                         data = self.cache.get(path, 'data')
                         full_delete = False
                         if (not data) or (data and (store == '' or data.store == store) and (not data.has('open')) and (not data.has('change'))):
                             if store == '':
-                                logger.debug("check_cache_size purge: '%s' '%s' OK full" % (store, path))
+                                logger.info("check_cache_size purge: '%s' '%s' OK full" % (store, path))
                                 self.cache.delete(path) # Remove completely from cache
                                 full_delete = True
                             elif data:
-                                logger.debug("check_cache_size purge: '%s' '%s' OK data" % (store, path))
+                                logger.info("check_cache_size purge: '%s' '%s' OK data" % (store, path))
                                 self.cache.delete(path, 'data') # Just remove data
                             else:
-                                logger.debug("check_cache_size purge: '%s' '%s' KO no data" % (store, path))
+                                logger.info("check_cache_size purge: '%s' '%s' no data" % (store, path))
                         else:
-                            logger.debug("check_cache_size purge: '%s' '%s' KO data? %s open? %s change? %s"
+                            logger.info("check_cache_size purge: '%s' '%s' data? %s open? %s change? %s"
                                          % (store, path, data != None, data and data.has('open'), data and data.has('change')))
                         if not full_delete:
                             # The entry is still there, let's append it again at the end of the RLU list
@@ -1899,11 +1895,7 @@ class YAS3FS(LoggingMixIn, Operations):
         thread_name = threading.current_thread().name
         logger.debug("download_data '%s' %i-%i [thread '%s']" % (path, start, end, thread_name))
 
-        sTime=dt.datetime.now()
         original_key = self.get_key(path)
-        delta = dt.datetime.now() - sTime
-        ms = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
-        logger.info("download_data.get_key completed for '%s' in %i milliseconds" % (path, ms))
         if original_key == None:
             logger.debug("download_data no key (before) '%s' [thread '%s']"
                              % (path, thread_name))
@@ -1928,16 +1920,6 @@ class YAS3FS(LoggingMixIn, Operations):
                              % (path, thread_name))
                 return
             new_interval = [start, min(end, key.size - 1)]
-            if data_range.interval.contains(new_interval): ### Can be removed ???
-                logger.debug("download_data '%s' %i-%i [thread '%s'] already downloaded"
-                             % (path, start, end, thread_name))
-                return
-            else:
-                for i in data_range.ongoing_intervals.itervalues():
-                    if i[0] <= new_interval[0] and i[1] >= new_interval[1]:
-                        logger.debug("download_data '%s' %i-%i [thread '%s'] already downloading"
-                                     % (path, start, end, thread_name))
-                        return
             data_range.ongoing_intervals[thread_name] = new_interval
 
         if new_interval[0] == 0 and new_interval[1] == key.size -1:
@@ -1950,7 +1932,6 @@ class YAS3FS(LoggingMixIn, Operations):
         retry = True
         # for https://github.com/danilop/yas3fs/issues/46
         retriesAttempted = 0
-        startDownload=dt.datetime.now()
         while retry:
 
             # for https://github.com/danilop/yas3fs/issues/62
@@ -1964,31 +1945,22 @@ class YAS3FS(LoggingMixIn, Operations):
             if retriesAttempted > self.download_retries_num:
                 retry = False
 
-            logger.debug("download_data range '%s' '%s' [thread '%s'] max: %i sleep: %i retries: %i" % (path, range_headers, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
             try:
-                if debug:
-                    n1=dt.datetime.now()
+                startDownload=dt.datetime.now()
                 if range_headers: # Use range headers only if necessary
                     bytes = key.get_contents_as_string(headers=range_headers)
                 else:
                     bytes = key.get_contents_as_string()
-                if debug:
-                    n2=dt.datetime.now()
                 retry = False
+                delta = dt.datetime.now() - startDownload
+                msDelta = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
+                logger.info("S3 call for key.get_contents_as_string completed for '%s' with range of  %i-%i in %i milliseconds" % (path,  start, end, msDelta))
 
             except Exception as e:
                 logger.exception(e)
                 logger.warn("download_data error '%s' %i-%i [thread '%s'] -> retrying max: %i sleep: %i retries: %i" % (path, start, end, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
                 time.sleep(self.download_retries_sleep) # for https://github.com/danilop/yas3fs/issues/46
                 key = copy.copy(self.get_key(path)) # Do I need this to overcome error "caching" ???
-
-        if debug:
-            elapsed = (n2-n1).microseconds/1e6
-            logger.debug("download_data done '%s' %i-%i [thread '%s'] elapsed %.6f" % (path, start, end, thread_name, elapsed))
-
-        delta = dt.datetime.now() - startDownload
-        msDelta = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
-        logger.info("download_data.key.get_content_as_string completed for '%s' with range of  %i-%i in %i milliseconds" % (path,  start, end, msDelta))
 
         with self.cache.get_lock(path):
                 data = self.cache.get(path, 'data')
