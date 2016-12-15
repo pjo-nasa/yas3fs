@@ -700,7 +700,7 @@ class YAS3FS(LoggingMixIn, Operations):
         ### self.http_listen_path_length = 30
         self.running = True
 
-        self.check_status_interval = 5.0 # Seconds, no need to configure that
+        self.check_status_interval = 30.0 # Seconds, no need to configure that
 
         self.s3_retries = options.s3_retries # Maximum number of S3 retries (outside of boto)
         logger.info("s3-retries: '%i'" % self.s3_retries)
@@ -1200,13 +1200,7 @@ class YAS3FS(LoggingMixIn, Operations):
                     self.flush_all_cache()
                     self.cache.reset_all() # Completely reset the cache
             else:
-                # c[2] exists and is not the root directory
-                for path in self.cache.entries.keys():
-                    # If the reset path is a directory and it matches
-                    # the directory in the cache, it will delete the
-                    # parent directory cache as well.
-                    if path.startswith(c[2]):
-                        self.delete_cache(path)
+                self.invalidate_cache(c[2])
         elif c[1] == 'url':
             with self.cache.lock:
                 self.flush_all_cache()
@@ -1296,8 +1290,6 @@ class YAS3FS(LoggingMixIn, Operations):
             logger.info("entries, mem_size, disk_size, download_queue, prefetch_queue, s3_queue: %i, %i, %i, %i, %i, %i"
                         % (num_entries, mem_size, disk_size,
                            self.download_queue.qsize(), self.prefetch_queue.qsize(), s3q))
-
-            logger.info("multipart_uploads_in_progress = " + str(self.multipart_uploads_in_progress))
 
             if debug:
                 logger.debug("new_locks, unused_locks: %i, %i"
@@ -1591,7 +1583,7 @@ class YAS3FS(LoggingMixIn, Operations):
                             try:
                                 key.metadata[metadata_name] = json.dumps(values)
                             except UnicodeDecodeError:
-                                logger.info("set_metadata '%s' '%s' '%s' cannot decode unicode, not written on S3"
+                                logger.warn("set_metadata '%s' '%s' '%s' cannot decode unicode, not written on S3"
                                             % (path, metadata_name, key))
                                 pass # Ignore the binary values - something better TODO ???
                     if (not data) or (data and (not data.has('change'))):
@@ -1957,25 +1949,21 @@ class YAS3FS(LoggingMixIn, Operations):
 
             logger.debug("download_data range '%s' '%s' [thread '%s'] max: %i sleep: %i retries: %i" % (path, range_headers, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
             try:
-                if debug:
-                    n1=dt.datetime.now()
+                startDownload=dt.datetime.now()
                 if range_headers: # Use range headers only if necessary
                     bytes = key.get_contents_as_string(headers=range_headers)
                 else:
                     bytes = key.get_contents_as_string()
-                if debug:
-                    n2=dt.datetime.now()
                 retry = False
+                delta = dt.datetime.now() - startDownload
+                msDelta = (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds / 1000.0
+                logger.info("S3 call for key.get_contents_as_string completed for '%s' with range of  %i-%i in %i milliseconds" % (path,  start, end, msDelta))
 
             except Exception as e:
                 logger.exception(e)
-                logger.info("download_data error '%s' %i-%i [thread '%s'] -> retrying max: %i sleep: %i retries: %i" % (path, start, end, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
+                logger.warn("download_data error '%s' %i-%i [thread '%s'] -> retrying max: %i sleep: %i retries: %i" % (path, start, end, thread_name, self.download_retries_num, self.download_retries_sleep, retriesAttempted))
                 time.sleep(self.download_retries_sleep) # for https://github.com/danilop/yas3fs/issues/46
                 key = copy.copy(self.get_key(path)) # Do I need this to overcome error "caching" ???
-
-        if debug:
-            elapsed = (n2-n1).microseconds/1e6
-            logger.debug("download_data done '%s' %i-%i [thread '%s'] elapsed %.6f" % (path, start, end, thread_name, elapsed))
 
         with self.cache.get_lock(path):
                 data = self.cache.get(path, 'data')
@@ -2556,7 +2544,7 @@ class YAS3FS(LoggingMixIn, Operations):
 
         with data.get_lock():
             if not data.content:
-                logger.info("write awake '%s' '%i' '%i' '%s' no content" % (path, len(new_data), offset, fh))
+                logger.warn("write awake '%s' '%i' '%i' '%s' no content" % (path, len(new_data), offset, fh))
                 return 0
             logger.debug("write '%s' '%i' '%i' '%s' '%s' content" % (path, len(new_data), offset, fh, data.content.name.decode('utf-8')))
             data.content.seek(offset)
@@ -2678,7 +2666,7 @@ class YAS3FS(LoggingMixIn, Operations):
                         part.pos = 0
 
                         logger.exception(e)
-                        logger.info("error during multipart upload part %i retry %i part__ %s : %s"
+                        logger.warn("error during multipart upload part %i retry %i part__ %s : %s"
                                     % (num, retry, str(part.__dict__), sys.exc_info()[0]))
                         time.sleep(self.s3_retries_sleep) # Better wait N seconds before retrying
                 logger.debug("end upload of part %i retry %i part__ %s" % (num, retry, str(part.__dict__)))
